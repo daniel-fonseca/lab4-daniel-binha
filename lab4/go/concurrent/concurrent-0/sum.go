@@ -37,7 +37,7 @@ func worker(id int, jobs <-chan string, results chan<- map[string]int, wg *sync.
 	for filePath := range jobs {
 		_sum, err := sum(filePath)
 		if err != nil {
-			results <- map[string]int{filePath: 0} // Send zero sum in case of an error
+			results <- map[string]int{filePath: 0}
 			fmt.Printf("Error processing file %s: %v\n", filePath, err)
 		} else {
 			results <- map[string]int{filePath: _sum}
