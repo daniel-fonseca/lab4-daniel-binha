@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 )
 
 // Define o tamanho de cada chunk em bytes
@@ -62,52 +61,23 @@ func similarity(chunks1, chunks2 []int) float64 {
 	return float64(matches) / float64(minLength) * 100
 }
 
-// worker function para ler chunks de arquivos e enviar resultados via canal
-func worker(path string, resultCh chan<- map[string][]int, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	chunks, err := readChunks(path)
-	if err != nil {
-		fmt.Printf("Erro ao processar o arquivo %s: %v\n", path, err)
-		resultCh <- nil
-		return
-	}
-	// Envia a soma dos chunks pelo canal
-	resultCh <- map[string][]int{path: chunks}
-}
-
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Uso: go run main.go <file1> <file2> ...")
 		return
 	}
 
-	// Canal para armazenar resultados e WaitGroup para sincronização
-	resultCh := make(chan map[string][]int, len(os.Args)-1)
-	var wg sync.WaitGroup
-
-	// Inicia uma goroutine para cada arquivo
-	for _, path := range os.Args[1:] {
-		wg.Add(1)
-		go worker(path, resultCh, &wg)
-	}
-
-	// Fecha o canal quando todas as goroutines terminarem
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
-
 	// Map para armazenar as somas dos chunks de cada arquivo
 	fileChunks := make(map[string][]int)
 
-	// Coleta os resultados dos chunks conforme as goroutines vão enviando
-	for result := range resultCh {
-		if result != nil {
-			for path, chunks := range result {
-				fileChunks[path] = chunks
-			}
+	// Processa cada arquivo de forma sequencial
+	for _, path := range os.Args[1:] {
+		chunks, err := readChunks(path)
+		if err != nil {
+			fmt.Printf("Erro ao processar o arquivo %s: %v\n", path, err)
+			continue
 		}
+		fileChunks[path] = chunks
 	}
 
 	// Compara os arquivos e imprime a similaridade
