@@ -1,85 +1,98 @@
 package main
 
 import (
-	"fmt"
-	"io/ioutil"
-	"os"
+    "fmt"
+    "io/ioutil"
+    "os"
+    "runtime"
+    "sync"
 )
 
-// read a file from a filepath and return a slice of bytes
+// readFile reads a file from a given path and returns the content as a slice of bytes
 func readFile(filePath string) ([]byte, error) {
-	data, err := ioutil.ReadFile(filePath)
-	if err != nil {
-		fmt.Printf("Error reading file %s: %v\n", filePath, err)
-		return nil, err
-	}
-	return data, nil
+    data, err := ioutil.ReadFile(filePath)
+    if err != nil {
+        return nil, err
+    }
+    return data, nil
 }
 
-// sum all bytes of a file
 func sum(filePath string) (int, error) {
-	data, err := readFile(filePath)
-	if err != nil {
-		return 0, err
-	}
+    data, err := readFile(filePath)
+    if err != nil {
+        return 0, err
+    }
 
-	_sum := 0
-	for _, b := range data {
-		_sum += int(b)
-	}
+    _sum := 0
+    for _, b := range data {
+        _sum += int(b)
+    }
 
-	return _sum, nil
+    return _sum, nil
 }
 
-// worker function to calculate sum and send the result via channel
-func worker(path string, resultCh chan<- map[int]string) {
-	_sum, err := sum(path)
-	if err != nil {
-		// send an empty result if there is an error
-		resultCh <- nil
-		return
-	}
+func worker(id int, jobs <-chan string, results chan<- map[string]int, wg *sync.WaitGroup) {
+    defer wg.Done()
 
-	// Send the result as a map with the sum and the file path
-	resultCh <- map[int]string{_sum: path}
+    for filePath := range jobs {
+        _sum, err := sum(filePath)
+        if err != nil {
+            results <- map[string]int{filePath: 0}
+            fmt.Printf("Error processing file %s: %v\n", filePath, err)
+        } else {
+            results <- map[string]int{filePath: _sum}
+        }
+    }
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run main.go <file1> <file2> ...")
-		return
-	}
+    if len(os.Args) < 2 {
+        fmt.Println("Usage: go run main.go <file1> <file2> ...")
+        return
+    }
 
-	sums := make(map[int][]string)
-	totalSum := int64(0)
-	resultCh := make(chan map[int]string)
+    numWorkers := runtime.NumCPU()
+    jobs := make(chan string, numWorkers)
+    results := make(chan map[string]int, numWorkers)
 
-	// Launch a goroutine for each file
-	for _, path := range os.Args[1:] {
-		go worker(path, resultCh)
-	}
+    var wg sync.WaitGroup
 
-	// Collect results from the channel
-	for i := 0; i < len(os.Args)-1; i++ {
-		result := <-resultCh
-		if result == nil {
-			continue
-		}
+    for i := 0; i < numWorkers; i++ {
+        wg.Add(1)
+        go worker(i, jobs, results, &wg)
+    }
 
-		// Process the result
-		for _sum, file := range result {
-			totalSum += int64(_sum)
-			sums[_sum] = append(sums[_sum], file)
-		}
-	}
+    go func() {
+        for _, path := range os.Args[1:] {
+            jobs <- path
+        }
+        close(jobs)
+    }()
 
-	// Print the total sum
-	fmt.Println(totalSum)
+    go func() {
+        wg.Wait()
+        close(results)
+    }()
 
-	// Print files with the same sum
-	for sum, files := range sums {
-		if len(files) > 1 {
-			fmt.Printf("Sum %d: %v\n", sum, files)
-		}
-	}
+    sums := make(map[int][]string)
+    var totalSum int64
+
+    for result := range results {
+        for file, _sum := range result {
+            if _sum == 0 {
+                continue
+            }
+
+            totalSum += int64(_sum)
+            sums[_sum] = append(sums[_sum], file)
+        }
+    }
+
+    fmt.Printf("%d\n", totalSum)
+
+    for sum, files := range sums {
+        if len(files) > 1 {
+            fmt.Printf("Files with the same sum (%d): %v\n", sum, files)
+        }
+    }
 }
