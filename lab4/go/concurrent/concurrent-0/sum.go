@@ -4,19 +4,19 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"runtime"
+	"sync"
 )
 
-// read a file from a filepath and return a slice of bytes
+// readFile reads a file from a given path and returns the content as a slice of bytes
 func readFile(filePath string) ([]byte, error) {
 	data, err := ioutil.ReadFile(filePath)
 	if err != nil {
-		fmt.Printf("Error reading file %s: %v", filePath, err)
 		return nil, err
 	}
 	return data, nil
 }
 
-// sum all bytes of a file
 func sum(filePath string) (int, error) {
 	data, err := readFile(filePath)
 	if err != nil {
@@ -31,32 +31,68 @@ func sum(filePath string) (int, error) {
 	return _sum, nil
 }
 
-// print the totalSum for all files and the files with equal sum
+func worker(id int, jobs <-chan string, results chan<- map[string]int, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for filePath := range jobs {
+		_sum, err := sum(filePath)
+		if err != nil {
+			results <- map[string]int{filePath: 0} // Send zero sum in case of an error
+			fmt.Printf("Error processing file %s: %v\n", filePath, err)
+		} else {
+			results <- map[string]int{filePath: _sum}
+		}
+	}
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: go run main.go <file1> <file2> ...")
 		return
 	}
 
-	var totalSum int64
-	sums := make(map[int][]string)
-	for _, path := range os.Args[1:] {
-		_sum, err := sum(path)
+	numWorkers := runtime.NumCPU()
+	jobs := make(chan string, numWorkers)
+	results := make(chan map[string]int, numWorkers)
 
-		if err != nil {
-			continue
-		}
+	var wg sync.WaitGroup
 
-		totalSum += int64(_sum)
-
-		sums[_sum] = append(sums[_sum], path)
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go worker(i, jobs, results, &wg)
 	}
 
-	fmt.Println(totalSum)
+	go func() {
+		for _, path := range os.Args[1:] {
+			jobs <- path
+		}
+		close(jobs)
+	}()
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	sums := make(map[int][]string)
+	var totalSum int64
+
+	for result := range results {
+		for file, _sum := range result {
+			if _sum == 0 {
+				continue
+			}
+
+			totalSum += int64(_sum)
+			sums[_sum] = append(sums[_sum], file)
+		}
+	}
+
+	fmt.Printf("%d\n", totalSum)
 
 	for sum, files := range sums {
 		if len(files) > 1 {
-			fmt.Printf("Sum %d: %v\n", sum, files)
+			fmt.Printf("Files with the same sum (%d): %v\n", sum, files)
 		}
 	}
 }
