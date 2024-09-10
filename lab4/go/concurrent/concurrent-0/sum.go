@@ -4,59 +4,77 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"sync"
 )
 
 // read a file from a filepath and return a slice of bytes
 func readFile(filePath string) ([]byte, error) {
 	data, err := ioutil.ReadFile(filePath)
 	if err != nil {
-		fmt.Printf("Error reading file %s: %v", filePath, err)
+		fmt.Printf("Erro ao ler o arquivo %s: %v\n", filePath, err)
 		return nil, err
 	}
 	return data, nil
 }
 
 // sum all bytes of a file
-func sum(filePath string) (int, error) {
+func sum(filePath string, ch chan<- map[string]int, wg *sync.WaitGroup) {
+	defer wg.Done() // finally marca a goroutine como concluída
+
 	data, err := readFile(filePath)
 	if err != nil {
-		return 0, err
+		ch <- map[string]int{filePath: 0}
+		return
 	}
 
 	_sum := 0
 	for _, b := range data {
 		_sum += int(b)
 	}
-
-	return _sum, nil
+l
+	ch <- map[string]int{filePath: _sum}
 }
 
-// print the totalSum for all files and the files with equal sum
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run main.go <file1> <file2> ...")
+		fmt.Println("Uso: go run main.go <file1> <file2> ...")
 		return
 	}
 
-	var totalSum int64
-	sums := make(map[int][]string)
+	ch := make(chan map[string]int)
+	var wg sync.WaitGroup
+
 	for _, path := range os.Args[1:] {
-		_sum, err := sum(path)
-
-		if err != nil {
-			continue
-		}
-
-		totalSum += int64(_sum)
-
-		sums[_sum] = append(sums[_sum], path)
+		wg.Add(1)
+		go sum(path, ch, &wg)
 	}
 
-	fmt.Println(totalSum)
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	sums := make(map[int][]string)
+	var totalSum int64
+
+	for result := range ch {
+		for file, _sum := range result {
+			if _sum == 0 {
+				fmt.Printf("Erro ao processar o arquivo %s\n", file)
+				continue
+			}
+
+			totalSum += int64(_sum)
+
+			sums[_sum] = append(sums[_sum], file)
+		}
+	}
+
+	fmt.Printf("Soma total: %d\n", totalSum)
 
 	for sum, files := range sums {
 		if len(files) > 1 {
-			fmt.Printf("Sum %d: %v\n", sum, files)
+			fmt.Printf("Arquivos com a mesma soma (%d): %v\n", sum, files)
 		}
 	}
 }
